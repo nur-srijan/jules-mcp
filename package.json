@@ -1,0 +1,32 @@
+{
+  "name": "jules-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for the Jules asynchronous coding agent",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "tunnel": "npx localtunnel --port 3000",
+    "tunnel:cloudflared": "cloudflared tunnel --url http://localhost:3000"
+  },
+  "bin": {
+    "jules-mcp": "dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "typescript": "^5.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
