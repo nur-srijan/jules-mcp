@@ -484,18 +484,72 @@ async function main() {
     app.get("/.well-known/oauth-authorization-server", oauthMetadataHandler);
     app.get("/.well-known/openid-configuration", oauthMetadataHandler);
 
-    // OAuth Authorization Endpoint (used by ChatGPT OAuth flow)
+    function getClientDisplayName(redirectUri: string, clientId?: string): string {
+        const uri = redirectUri.toLowerCase();
+        const id = (clientId || "").toLowerCase();
+        if (uri.includes("google") || uri.includes("gemini") || uri.includes("vertex") || id.includes("gemini")) {
+            return "Google Gemini";
+        }
+        if (uri.includes("chatgpt") || uri.includes("openai") || id.includes("chatgpt")) {
+            return "ChatGPT";
+        }
+        if (uri.includes("claude") || uri.includes("anthropic")) {
+            return "Claude";
+        }
+        return "AI Client";
+    }
+
+    function renderAuthPage(redirectUri: string, state: string | undefined, clientName: string, error?: string): string {
+        return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorize ${clientName} - Jules MCP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 1rem; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 2.2rem; max-width: 420px; width: 100%; box-shadow: 0 12px 30px rgba(0,0,0,0.6); text-align: center; }
+        .badge { display: inline-block; background: #0284c7; color: #fff; font-size: 0.75rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 9999px; text-transform: uppercase; margin-bottom: 0.8rem; letter-spacing: 0.05em; }
+        h2 { margin: 0 0 0.5rem; color: #f8fafc; font-size: 1.5rem; }
+        p { color: #94a3b8; font-size: 0.95rem; line-height: 1.5; margin: 0 0 1.5rem; }
+        input { width: 100%; box-sizing: border-box; padding: 0.85rem 1rem; background: #0f172a; border: 1px solid #475569; border-radius: 8px; color: #fff; margin-bottom: 1rem; font-size: 1rem; outline: none; transition: border-color 0.2s; }
+        input:focus { border-color: #38bdf8; }
+        button { width: 100%; padding: 0.85rem; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #1d4ed8; }
+        .error { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; padding: 0.6rem; border-radius: 8px; font-size: 0.9rem; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="badge">Model Context Protocol</div>
+        <h2>Connect to ${clientName}</h2>
+        <p>Authorize <strong>${clientName}</strong> to interact with your private <strong>Jules MCP Server</strong>.</p>
+        ${error ? `<div class="error">${error}</div>` : ""}
+        <form method="POST" action="/oauth/authorize">
+            <input type="hidden" name="redirect_uri" value="${encodeURIComponent(redirectUri)}" />
+            <input type="hidden" name="state" value="${state ? encodeURIComponent(state) : ""}" />
+            <input type="hidden" name="client_id" value="${encodeURIComponent(clientName)}" />
+            <input type="password" name="password" placeholder="Enter Client Secret / Password" required autofocus />
+            <button type="submit">Authorize ${clientName}</button>
+        </form>
+    </div>
+</body>
+</html>`;
+    }
+
+    // OAuth Authorization Endpoint (used by Gemini and ChatGPT OAuth flows)
     app.get("/oauth/authorize", (req, res) => {
-        const { redirect_uri, state } = req.query;
+        const { redirect_uri, state, client_id, token, password } = req.query;
         if (!redirect_uri || typeof redirect_uri !== "string") {
             res.status(400).send("Missing redirect_uri parameter.");
             return;
         }
 
         const { clientSecret } = getExpectedCredentials();
+        const clientName = getClientDisplayName(redirect_uri, typeof client_id === "string" ? client_id : undefined);
 
-        // If no secret configured, immediately redirect back with code
-        if (!clientSecret) {
+        // Auto-approve if token/password is already provided in query param or if no secret is set
+        const providedSecret = token || password;
+        if (!clientSecret || (typeof providedSecret === "string" && providedSecret === clientSecret)) {
             const code = crypto.randomBytes(24).toString("hex");
             authCodes.set(code, { redirectUri: redirect_uri, expiry: Date.now() + 600000, state: typeof state === "string" ? state : undefined });
             const redirectUrl = new URL(redirect_uri);
@@ -505,49 +559,25 @@ async function main() {
             return;
         }
 
-        res.send(`<!DOCTYPE html>
-<html>
-<head>
-    <title>Authorize ChatGPT - Jules MCP</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 1rem; }
-        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 2rem; max-width: 400px; width: 100%; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; }
-        h2 { margin-top: 0; color: #38bdf8; }
-        p { color: #94a3b8; font-size: 0.95rem; line-height: 1.5; }
-        input { width: 100%; box-sizing: border-box; padding: 0.75rem 1rem; background: #0f172a; border: 1px solid #475569; border-radius: 8px; color: #fff; margin: 1rem 0; font-size: 1rem; }
-        button { width: 100%; padding: 0.75rem; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
-        button:hover { background: #1d4ed8; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>Connect to ChatGPT</h2>
-        <p>Authorize ChatGPT to connect to your private <strong>Jules MCP Server</strong>.</p>
-        <form method="POST" action="/oauth/authorize">
-            <input type="hidden" name="redirect_uri" value="${encodeURIComponent(redirect_uri)}" />
-            <input type="hidden" name="state" value="${typeof state === 'string' ? encodeURIComponent(state) : ''}" />
-            <input type="password" name="password" placeholder="Enter Client Secret / Password" required autofocus />
-            <button type="submit">Authorize ChatGPT</button>
-        </form>
-    </div>
-</body>
-</html>`);
+        res.send(renderAuthPage(redirect_uri, typeof state === "string" ? state : undefined, clientName));
     });
 
     app.post("/oauth/authorize", (req, res) => {
         const redirect_uri = req.body.redirect_uri ? decodeURIComponent(req.body.redirect_uri) : null;
         const state = req.body.state ? decodeURIComponent(req.body.state) : null;
         const password = req.body.password;
+        const client_id = req.body.client_id;
 
         if (!redirect_uri) {
             res.status(400).send("Missing redirect_uri.");
             return;
         }
 
+        const clientName = getClientDisplayName(redirect_uri, client_id);
         const { clientSecret } = getExpectedCredentials();
+
         if (clientSecret && password !== clientSecret) {
-            res.status(401).send("Invalid password. Please go back and try again.");
+            res.status(401).send(renderAuthPage(redirect_uri, state || undefined, clientName, "Incorrect password. Please try again."));
             return;
         }
 
