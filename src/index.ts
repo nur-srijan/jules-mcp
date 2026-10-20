@@ -462,7 +462,9 @@ async function main() {
         });
     });
 
-    // 2. OAuth 2.0 Endpoints for Gemini & RFC 8414
+    // 2. OAuth 2.0 Endpoints for Gemini, ChatGPT & RFC 8414
+    const authCodes = new Map<string, { redirectUri: string; expiry: number; state?: string }>();
+
     const oauthMetadataHandler = (req: express.Request, res: express.Response) => {
         const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
         const host = req.headers["x-forwarded-host"] || req.headers.host;
@@ -470,19 +472,126 @@ async function main() {
 
         res.json({
             issuer: baseUrl,
+            authorization_endpoint: `${baseUrl}/oauth/authorize`,
             token_endpoint: `${baseUrl}/oauth/token`,
-            token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
-            grant_types_supported: ["client_credentials"],
-            response_types_supported: ["token"],
+            token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
+            grant_types_supported: ["authorization_code", "client_credentials"],
+            response_types_supported: ["code", "token"],
+            code_challenge_methods_supported: ["S256", "plain"],
         });
     };
 
     app.get("/.well-known/oauth-authorization-server", oauthMetadataHandler);
     app.get("/.well-known/openid-configuration", oauthMetadataHandler);
 
+    // OAuth Authorization Endpoint (used by ChatGPT OAuth flow)
+    app.get("/oauth/authorize", (req, res) => {
+        const { redirect_uri, state } = req.query;
+        if (!redirect_uri || typeof redirect_uri !== "string") {
+            res.status(400).send("Missing redirect_uri parameter.");
+            return;
+        }
+
+        const { clientSecret } = getExpectedCredentials();
+
+        // If no secret configured, immediately redirect back with code
+        if (!clientSecret) {
+            const code = crypto.randomBytes(24).toString("hex");
+            authCodes.set(code, { redirectUri: redirect_uri, expiry: Date.now() + 600000, state: typeof state === "string" ? state : undefined });
+            const redirectUrl = new URL(redirect_uri);
+            redirectUrl.searchParams.set("code", code);
+            if (state && typeof state === "string") redirectUrl.searchParams.set("state", state);
+            res.redirect(redirectUrl.toString());
+            return;
+        }
+
+        res.send(`<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorize ChatGPT - Jules MCP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 1rem; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 2rem; max-width: 400px; width: 100%; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; }
+        h2 { margin-top: 0; color: #38bdf8; }
+        p { color: #94a3b8; font-size: 0.95rem; line-height: 1.5; }
+        input { width: 100%; box-sizing: border-box; padding: 0.75rem 1rem; background: #0f172a; border: 1px solid #475569; border-radius: 8px; color: #fff; margin: 1rem 0; font-size: 1rem; }
+        button { width: 100%; padding: 0.75rem; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #1d4ed8; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Connect to ChatGPT</h2>
+        <p>Authorize ChatGPT to connect to your private <strong>Jules MCP Server</strong>.</p>
+        <form method="POST" action="/oauth/authorize">
+            <input type="hidden" name="redirect_uri" value="${encodeURIComponent(redirect_uri)}" />
+            <input type="hidden" name="state" value="${typeof state === 'string' ? encodeURIComponent(state) : ''}" />
+            <input type="password" name="password" placeholder="Enter Client Secret / Password" required autofocus />
+            <button type="submit">Authorize ChatGPT</button>
+        </form>
+    </div>
+</body>
+</html>`);
+    });
+
+    app.post("/oauth/authorize", (req, res) => {
+        const redirect_uri = req.body.redirect_uri ? decodeURIComponent(req.body.redirect_uri) : null;
+        const state = req.body.state ? decodeURIComponent(req.body.state) : null;
+        const password = req.body.password;
+
+        if (!redirect_uri) {
+            res.status(400).send("Missing redirect_uri.");
+            return;
+        }
+
+        const { clientSecret } = getExpectedCredentials();
+        if (clientSecret && password !== clientSecret) {
+            res.status(401).send("Invalid password. Please go back and try again.");
+            return;
+        }
+
+        const code = crypto.randomBytes(24).toString("hex");
+        authCodes.set(code, { redirectUri: redirect_uri, expiry: Date.now() + 600000, state: state || undefined });
+
+        const redirectUrl = new URL(redirect_uri);
+        redirectUrl.searchParams.set("code", code);
+        if (state) redirectUrl.searchParams.set("state", state);
+        res.redirect(redirectUrl.toString());
+    });
+
     const tokenHandler = (req: express.Request, res: express.Response) => {
         const { clientId, clientSecret } = getExpectedCredentials();
+        const grantType = req.body?.grant_type || "client_credentials";
 
+        // Handle ChatGPT Authorization Code flow
+        if (grantType === "authorization_code") {
+            const code = req.body?.code;
+            const codeEntry = code ? authCodes.get(code) : undefined;
+
+            if (!codeEntry || Date.now() > codeEntry.expiry) {
+                res.status(400).json({
+                    error: "invalid_grant",
+                    error_description: "Invalid or expired authorization code.",
+                });
+                return;
+            }
+
+            authCodes.delete(code);
+
+            const accessToken = crypto.randomBytes(32).toString("hex");
+            const expiresInSeconds = 86400 * 30; // 30 days
+            issuedTokens.set(accessToken, Date.now() + expiresInSeconds * 1000);
+
+            res.json({
+                access_token: accessToken,
+                token_type: "Bearer",
+                expires_in: expiresInSeconds,
+            });
+            return;
+        }
+
+        // Handle Client Credentials flow (Gemini, etc.)
         let reqClientId = req.body?.client_id;
         let reqClientSecret = req.body?.client_secret;
 
@@ -498,7 +607,6 @@ async function main() {
             }
         }
 
-        // Validate
         if (clientSecret) {
             const matchesId = !clientId || reqClientId === clientId;
             const matchesSecret = reqClientSecret === clientSecret;
