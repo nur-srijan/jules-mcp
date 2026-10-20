@@ -434,6 +434,15 @@ async function main() {
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
 
+    // Request logging for troubleshooting connections
+    app.use((req, res, next) => {
+        const start = Date.now();
+        res.on("finish", () => {
+            console.log(`[HTTP] ${req.method} ${req.originalUrl || req.url} -> ${res.statusCode} (${Date.now() - start}ms)`);
+        });
+        next();
+    });
+
     // 1. Health check & Info
     app.get("/health", (_req, res) => {
         res.json({
@@ -456,14 +465,22 @@ async function main() {
                 mcp: "/mcp (Streamable HTTP, used by Gemini Connected Apps)",
                 sse: "/sse (Server-Sent Events transport)",
                 message: "/message (SSE POST endpoint)",
-                token: "/oauth/token (OAuth 2.0 Client Credentials token endpoint)",
+                token: "/oauth/token (OAuth 2.0 token endpoint)",
                 health: "/health",
             },
         });
     });
 
     // 2. OAuth 2.0 Endpoints for Gemini, ChatGPT & RFC 8414
-    const authCodes = new Map<string, { redirectUri: string; expiry: number; state?: string }>();
+    interface AuthCodeEntry {
+        redirectUri: string;
+        expiry: number;
+        state?: string;
+        clientId?: string;
+        scope?: string;
+    }
+    const authCodes = new Map<string, AuthCodeEntry>();
+    const refreshTokens = new Map<string, { clientId?: string; expiry: number; scope?: string }>();
 
     const oauthMetadataHandler = (req: express.Request, res: express.Response) => {
         const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
@@ -475,7 +492,7 @@ async function main() {
             authorization_endpoint: `${baseUrl}/oauth/authorize`,
             token_endpoint: `${baseUrl}/oauth/token`,
             token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
-            grant_types_supported: ["authorization_code", "client_credentials"],
+            grant_types_supported: ["authorization_code", "refresh_token", "client_credentials"],
             response_types_supported: ["code", "token"],
             code_challenge_methods_supported: ["S256", "plain"],
         });
@@ -499,11 +516,20 @@ async function main() {
         return "AI Client";
     }
 
-    function renderAuthPage(redirectUri: string, state: string | undefined, clientName: string, error?: string): string {
+    function escapeHtml(str: string): string {
+        return str
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function renderAuthPage(redirectUri: string, state: string | undefined, clientName: string, clientId?: string, error?: string): string {
         return `<!DOCTYPE html>
 <html>
 <head>
-    <title>Authorize ${clientName} - Jules MCP</title>
+    <title>Authorize ${escapeHtml(clientName)} - Jules MCP</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 1rem; }
@@ -521,15 +547,15 @@ async function main() {
 <body>
     <div class="card">
         <div class="badge">Model Context Protocol</div>
-        <h2>Connect to ${clientName}</h2>
-        <p>Authorize <strong>${clientName}</strong> to interact with your private <strong>Jules MCP Server</strong>.</p>
-        ${error ? `<div class="error">${error}</div>` : ""}
+        <h2>Connect to ${escapeHtml(clientName)}</h2>
+        <p>Authorize <strong>${escapeHtml(clientName)}</strong> to interact with your private <strong>Jules MCP Server</strong>.</p>
+        ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
         <form method="POST" action="/oauth/authorize">
-            <input type="hidden" name="redirect_uri" value="${encodeURIComponent(redirectUri)}" />
-            <input type="hidden" name="state" value="${state ? encodeURIComponent(state) : ""}" />
-            <input type="hidden" name="client_id" value="${encodeURIComponent(clientName)}" />
+            <input type="hidden" name="redirect_uri" value="${escapeHtml(redirectUri)}" />
+            <input type="hidden" name="state" value="${escapeHtml(state || "")}" />
+            <input type="hidden" name="client_id" value="${escapeHtml(clientId || "")}" />
             <input type="password" name="password" placeholder="Enter Client Secret / Password" required autofocus />
-            <button type="submit">Authorize ${clientName}</button>
+            <button type="submit">Authorize ${escapeHtml(clientName)}</button>
         </form>
     </div>
 </body>
@@ -538,7 +564,7 @@ async function main() {
 
     // OAuth Authorization Endpoint (used by Gemini and ChatGPT OAuth flows)
     app.get("/oauth/authorize", (req, res) => {
-        const { redirect_uri, state, client_id, token, password } = req.query;
+        const { redirect_uri, state, client_id, token, password, scope } = req.query;
         if (!redirect_uri || typeof redirect_uri !== "string") {
             res.status(400).send("Missing redirect_uri parameter.");
             return;
@@ -551,7 +577,13 @@ async function main() {
         const providedSecret = token || password;
         if (!clientSecret || (typeof providedSecret === "string" && providedSecret === clientSecret)) {
             const code = crypto.randomBytes(24).toString("hex");
-            authCodes.set(code, { redirectUri: redirect_uri, expiry: Date.now() + 600000, state: typeof state === "string" ? state : undefined });
+            authCodes.set(code, {
+                redirectUri: redirect_uri,
+                expiry: Date.now() + 600000,
+                state: typeof state === "string" ? state : undefined,
+                clientId: typeof client_id === "string" ? client_id : undefined,
+                scope: typeof scope === "string" ? scope : undefined,
+            });
             const redirectUrl = new URL(redirect_uri);
             redirectUrl.searchParams.set("code", code);
             if (state && typeof state === "string") redirectUrl.searchParams.set("state", state);
@@ -559,16 +591,16 @@ async function main() {
             return;
         }
 
-        res.send(renderAuthPage(redirect_uri, typeof state === "string" ? state : undefined, clientName));
+        res.send(renderAuthPage(redirect_uri, typeof state === "string" ? state : undefined, clientName, typeof client_id === "string" ? client_id : undefined));
     });
 
     app.post("/oauth/authorize", (req, res) => {
-        const redirect_uri = req.body.redirect_uri ? decodeURIComponent(req.body.redirect_uri) : null;
-        const state = req.body.state ? decodeURIComponent(req.body.state) : null;
+        const redirect_uri = req.body.redirect_uri;
+        const state = req.body.state;
         const password = req.body.password;
         const client_id = req.body.client_id;
 
-        if (!redirect_uri) {
+        if (!redirect_uri || typeof redirect_uri !== "string") {
             res.status(400).send("Missing redirect_uri.");
             return;
         }
@@ -577,12 +609,17 @@ async function main() {
         const { clientSecret } = getExpectedCredentials();
 
         if (clientSecret && password !== clientSecret) {
-            res.status(401).send(renderAuthPage(redirect_uri, state || undefined, clientName, "Incorrect password. Please try again."));
+            res.status(401).send(renderAuthPage(redirect_uri, state || undefined, clientName, client_id, "Incorrect password. Please try again."));
             return;
         }
 
         const code = crypto.randomBytes(24).toString("hex");
-        authCodes.set(code, { redirectUri: redirect_uri, expiry: Date.now() + 600000, state: state || undefined });
+        authCodes.set(code, {
+            redirectUri: redirect_uri,
+            expiry: Date.now() + 600000,
+            state: state || undefined,
+            clientId: client_id || undefined,
+        });
 
         const redirectUrl = new URL(redirect_uri);
         redirectUrl.searchParams.set("code", code);
@@ -594,7 +631,7 @@ async function main() {
         const { clientId, clientSecret } = getExpectedCredentials();
         const grantType = req.body?.grant_type || "client_credentials";
 
-        // Handle ChatGPT Authorization Code flow
+        // 1. Authorization Code Grant (Gemini, ChatGPT OAuth code exchange)
         if (grantType === "authorization_code") {
             const code = req.body?.code;
             const codeEntry = code ? authCodes.get(code) : undefined;
@@ -610,18 +647,65 @@ async function main() {
             authCodes.delete(code);
 
             const accessToken = crypto.randomBytes(32).toString("hex");
+            const refreshToken = crypto.randomBytes(32).toString("hex");
             const expiresInSeconds = 86400 * 30; // 30 days
             issuedTokens.set(accessToken, Date.now() + expiresInSeconds * 1000);
+            refreshTokens.set(refreshToken, {
+                clientId: codeEntry.clientId,
+                expiry: Date.now() + 86400 * 365 * 1000, // 1 year
+                scope: codeEntry.scope || "mcp",
+            });
 
+            console.log(`[OAuth] Successfully issued access_token and refresh_token for ${codeEntry.clientId || "client"}`);
+
+            // Google Gemini mandates refresh_token to persist connected app
             res.json({
                 access_token: accessToken,
                 token_type: "Bearer",
                 expires_in: expiresInSeconds,
+                refresh_token: refreshToken,
+                scope: codeEntry.scope || "mcp",
             });
             return;
         }
 
-        // Handle Client Credentials flow (Gemini, etc.)
+        // 2. Refresh Token Grant
+        if (grantType === "refresh_token") {
+            const reqRefreshToken = req.body?.refresh_token;
+            const tokenEntry = reqRefreshToken ? refreshTokens.get(reqRefreshToken) : undefined;
+
+            if (!tokenEntry || Date.now() > tokenEntry.expiry) {
+                res.status(400).json({
+                    error: "invalid_grant",
+                    error_description: "Invalid or expired refresh token.",
+                });
+                return;
+            }
+
+            const newAccessToken = crypto.randomBytes(32).toString("hex");
+            const newRefreshToken = crypto.randomBytes(32).toString("hex");
+            const expiresInSeconds = 86400 * 30;
+            issuedTokens.set(newAccessToken, Date.now() + expiresInSeconds * 1000);
+            refreshTokens.delete(reqRefreshToken);
+            refreshTokens.set(newRefreshToken, {
+                clientId: tokenEntry.clientId,
+                expiry: Date.now() + 86400 * 365 * 1000,
+                scope: tokenEntry.scope,
+            });
+
+            console.log(`[OAuth] Refreshed tokens for ${tokenEntry.clientId || "client"}`);
+
+            res.json({
+                access_token: newAccessToken,
+                token_type: "Bearer",
+                expires_in: expiresInSeconds,
+                refresh_token: newRefreshToken,
+                scope: tokenEntry.scope || "mcp",
+            });
+            return;
+        }
+
+        // 3. Client Credentials Grant
         let reqClientId = req.body?.client_id;
         let reqClientSecret = req.body?.client_secret;
 
@@ -651,13 +735,20 @@ async function main() {
         }
 
         const accessToken = crypto.randomBytes(32).toString("hex");
-        const expiresInSeconds = 86400; // 24 hours
+        const refreshToken = crypto.randomBytes(32).toString("hex");
+        const expiresInSeconds = 86400 * 30; // 30 days
         issuedTokens.set(accessToken, Date.now() + expiresInSeconds * 1000);
+        refreshTokens.set(refreshToken, {
+            clientId: reqClientId,
+            expiry: Date.now() + 86400 * 365 * 1000,
+        });
 
         res.json({
             access_token: accessToken,
             token_type: "Bearer",
             expires_in: expiresInSeconds,
+            refresh_token: refreshToken,
+            scope: "mcp",
         });
     };
 
@@ -677,10 +768,25 @@ async function main() {
             return;
         }
 
-        // Auto-fill Accept header if missing or wildcard to prevent 406 errors from non-standard clients
+        // Ensure Accept header satisfies MCP specification (must include application/json AND text/event-stream)
         const currentAccept = req.headers.accept;
-        if (!currentAccept || currentAccept === "*/*" || currentAccept === "application/json") {
-            req.headers.accept = "application/json, text/event-stream";
+        if (!currentAccept || !currentAccept.includes("application/json") || !currentAccept.includes("text/event-stream")) {
+            const requiredAccept = "application/json, text/event-stream";
+            req.headers.accept = requiredAccept;
+            // @hono/node-server (used internally by MCP SDK) parses req.rawHeaders to create Web Standard Request
+            if (Array.isArray(req.rawHeaders)) {
+                let found = false;
+                for (let i = 0; i < req.rawHeaders.length; i += 2) {
+                    if (req.rawHeaders[i].toLowerCase() === "accept") {
+                        req.rawHeaders[i + 1] = requiredAccept;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    req.rawHeaders.push("accept", requiredAccept);
+                }
+            }
         }
 
         try {
