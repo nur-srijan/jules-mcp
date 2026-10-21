@@ -13,7 +13,7 @@ import {
     ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { JulesClient } from "./jules-client.js";
+import { JulesClient, Activity } from "./jules-client.js";
 
 // ─── Jules Client ─────────────────────────────────────────────────────────────
 
@@ -98,6 +98,30 @@ const ListActivitiesInput = z.object({
         .optional()
         .describe("Max activities per page (default: 30)"),
     pageToken: z.string().optional().describe("Token for the next page of results"),
+});
+
+const WaitForSessionInput = z.object({
+    sessionId: z.string().min(1).describe("The numeric session ID to monitor"),
+    timeoutSeconds: z
+        .number()
+        .int()
+        .min(5)
+        .max(120)
+        .optional()
+        .describe("Max seconds to wait before returning current status (default: 50, max: 120)"),
+    pollIntervalSeconds: z
+        .number()
+        .int()
+        .min(2)
+        .max(15)
+        .optional()
+        .describe("Seconds between polling Jules API (default: 4)"),
+    stopOnPlanApproval: z
+        .boolean()
+        .optional()
+        .describe(
+            "If true (default), returns immediately when a plan is generated and awaiting approval so the orchestrator can review it."
+        ),
 });
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────────
@@ -217,7 +241,166 @@ const TOOLS = [
             required: ["sessionId"],
         },
     },
+    {
+        name: "wait_for_session",
+        description:
+            "Wait and monitor an asynchronous Jules session until it completes, generates a plan awaiting approval, or hits a timeout. Ideal for autonomous orchestrators (Task mode, Antigravity, Cowork) to avoid burning reasoning steps on repetitive polling.",
+        inputSchema: {
+            type: "object" as const,
+            properties: {
+                sessionId: {
+                    type: "string",
+                    description: "The numeric session ID to monitor",
+                },
+                timeoutSeconds: {
+                    type: "number",
+                    description: "Max seconds to wait before returning current status (default: 50, max: 120)",
+                },
+                pollIntervalSeconds: {
+                    type: "number",
+                    description: "Seconds between polling Jules API (default: 4)",
+                },
+                stopOnPlanApproval: {
+                    type: "boolean",
+                    description:
+                        "If true (default), returns immediately when an execution plan is generated and awaiting approval so you can review and approve it.",
+                },
+            },
+            required: ["sessionId"],
+        },
+    },
 ];
+
+function formatActivitySummary(activities: Activity[]): string[] {
+    return activities.map((a) => {
+        const time = a.createTime ? new Date(a.createTime).toLocaleTimeString() : "";
+        const prefix = time ? `[${time}] ` : "";
+
+        if (a.sessionCompleted !== undefined) {
+            return `${prefix}✅ Session completed`;
+        }
+        if (a.planGenerated) {
+            const stepsCount = a.planGenerated.plan?.steps?.length || 0;
+            return `${prefix}📋 Plan generated (${stepsCount} steps)`;
+        }
+        if (a.planApproved) {
+            return `${prefix}👍 Plan approved`;
+        }
+        if (a.progressUpdated) {
+            let desc = a.progressUpdated.title;
+            if (a.progressUpdated.description) {
+                const trimmed = a.progressUpdated.description.replace(/\s+/g, " ").slice(0, 150);
+                desc += `: ${trimmed}`;
+            }
+            return `${prefix}⚙️ ${desc}`;
+        }
+        return `${prefix}Activity (${a.originator})`;
+    });
+}
+
+async function executeWaitForSession(
+    jules: JulesClient,
+    sessionId: string,
+    timeoutSeconds = 50,
+    pollIntervalSeconds = 4,
+    stopOnPlanApproval = true
+) {
+    const startTime = Date.now();
+    const deadline = startTime + timeoutSeconds * 1000;
+
+    while (Date.now() < deadline) {
+        const [session, activitiesRes] = await Promise.all([
+            jules.getSession(sessionId),
+            jules.listActivities(sessionId, { pageSize: 30 }).catch(() => ({ activities: [] })),
+        ]);
+
+        const activities = activitiesRes.activities || [];
+        const completedActivity = activities.find((a) => a.sessionCompleted !== undefined);
+        const pr = session.outputs?.find((o) => o.pullRequest)?.pullRequest;
+
+        // 1. Session completed
+        if (completedActivity || pr) {
+            return {
+                status: "COMPLETED",
+                isDone: true,
+                needsApproval: false,
+                sessionId,
+                pullRequest: pr || null,
+                elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
+                summary: pr
+                    ? `Jules has completed the session and created PR: ${pr.url} (${pr.title})`
+                    : "Jules has completed the session.",
+                latestActivities: formatActivitySummary(activities.slice(-5)),
+                nextStep: "Review the created PR or verify the changes.",
+            };
+        }
+
+        // 2. Check if awaiting plan approval
+        if (stopOnPlanApproval) {
+            const planGenIdx = activities.findIndex((a) => a.planGenerated !== undefined);
+            const planAppIdx = activities.findIndex((a) => a.planApproved !== undefined);
+            if (planGenIdx !== -1 && (planAppIdx === -1 || planAppIdx < planGenIdx)) {
+                const plan = activities[planGenIdx].planGenerated?.plan;
+                return {
+                    status: "AWAITING_PLAN_APPROVAL",
+                    isDone: false,
+                    needsApproval: true,
+                    sessionId,
+                    elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
+                    plan: plan || null,
+                    summary: "Jules has generated an execution plan and is waiting for your approval.",
+                    latestActivities: formatActivitySummary(activities.slice(-5)),
+                    nextStep:
+                        "Review the plan steps above. If satisfied, call approve_plan(sessionId). If changes are needed, call send_message(sessionId, prompt).",
+                };
+            }
+        }
+
+        // Check if remaining time allows another poll
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= pollIntervalSeconds * 1000) {
+            break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalSeconds * 1000));
+    }
+
+    // Timeout elapsed without terminal state
+    const [finalSession, finalActivitiesRes] = await Promise.all([
+        jules.getSession(sessionId),
+        jules.listActivities(sessionId, { pageSize: 30 }).catch(() => ({ activities: [] })),
+    ]);
+    const finalActivities = finalActivitiesRes.activities || [];
+    const pr = finalSession.outputs?.find((o) => o.pullRequest)?.pullRequest;
+    const completed = finalActivities.some((a) => a.sessionCompleted !== undefined);
+
+    if (completed || pr) {
+        return {
+            status: "COMPLETED",
+            isDone: true,
+            needsApproval: false,
+            sessionId,
+            pullRequest: pr || null,
+            elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
+            summary: pr
+                ? `Jules has completed the session and created PR: ${pr.url}`
+                : "Jules has completed the session.",
+            latestActivities: formatActivitySummary(finalActivities.slice(-5)),
+            nextStep: "Review the created PR or inspect the activities to verify the changes.",
+        };
+    }
+
+    return {
+        status: "IN_PROGRESS",
+        isDone: false,
+        needsApproval: false,
+        sessionId,
+        elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
+        summary: `Jules is still working (${Math.round((Date.now() - startTime) / 1000)}s elapsed).`,
+        latestActivities: formatActivitySummary(finalActivities.slice(-5)),
+        nextStep: "Call wait_for_session again to continue monitoring until completion.",
+    };
+}
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────────
 
@@ -322,6 +505,20 @@ function createMcpServer(): Server {
                 case "list_activities": {
                     const { sessionId, ...rest } = ListActivitiesInput.parse(args);
                     const result = await jules.listActivities(sessionId, rest);
+                    return {
+                        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+                    };
+                }
+
+                case "wait_for_session": {
+                    const input = WaitForSessionInput.parse(args);
+                    const result = await executeWaitForSession(
+                        jules,
+                        input.sessionId,
+                        input.timeoutSeconds,
+                        input.pollIntervalSeconds,
+                        input.stopOnPlanApproval
+                    );
                     return {
                         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
                     };
