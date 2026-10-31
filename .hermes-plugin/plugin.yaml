@@ -1,0 +1,6 @@
+name: jules-orchestrator
+version: 1.0.0
+description: Jules Orchestrator skills and workflow bootstrap for Hermes Agent
+author: Nur Srijan
+homepage: https://github.com/nur-srijan/jules-mcp
+skills: ./skills/

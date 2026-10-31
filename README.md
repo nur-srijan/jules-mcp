@@ -1,10 +1,76 @@
-# Jules MCP Server
+# Jules MCP Server & Orchestrator Skill
 
-A production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that connects any MCP-compatible AI client or chatbot (Google Gemini Connected Apps, Claude Desktop, Cursor, Windsurf, etc.) to the [Jules](https://jules.google.com) asynchronous coding agent.
+[![MCP](https://img.shields.io/badge/MCP-Compatible-blue.svg)](https://modelcontextprotocol.io)
+[![Claude Code Plugin](https://img.shields.io/badge/Claude%20Code-Plugin-purple.svg)](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code)
+[![Skills.sh](https://img.shields.io/badge/skills.sh-jules--orchestrator-green.svg)](https://skills.sh)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server and battle-tested **Lead Architect / Orchestration Skill** connecting any AI client or agent (Claude Code, Google Antigravity, Cursor, Windsurf, Codex, Devin, Kimi Code) to the [Google Jules](https://jules.google.com) asynchronous coding agent.
 
 ---
 
-## 🛠️ Available Tools
+## ⚡ Quickstart: Installing the Orchestrator Skill
+
+The repository is bundled as an omni-channel agent plugin and skill package. You can install and use it directly across all major agent environments:
+
+### 1. Claude Code (`/plugin` Marketplace)
+Add this repository as a marketplace and install the orchestrator plugin:
+```bash
+/plugin marketplace add nur-srijan/jules-mcp
+/plugin install jules-orchestrator
+```
+*(Claude Code will automatically detect the plugin manifest, load the skills from `./skills/`, and configure the MCP server via `.mcp.json`)*.
+
+---
+
+### 2. Universal Agent Skills CLI (`npx skills`)
+Install the `jules-orchestrator` skill directly into your current workspace:
+```bash
+npx skills add nur-srijan/jules-mcp
+```
+*(Or install globally to use across all projects: `npx skills add -g nur-srijan/jules-mcp`)*.
+
+---
+
+### 3. Google Antigravity & Gemini CLI
+Clone or link into your agent skills directory:
+```bash
+# Workspace level:
+git clone https://github.com/nur-srijan/jules-mcp.git .agents/plugins/jules-mcp
+
+# Or user level:
+git clone https://github.com/nur-srijan/jules-mcp.git ~/.gemini/config/skills/jules-orchestrator
+```
+Antigravity automatically discovers the skill definition in `skills/jules-orchestrator/SKILL.md` and plugin manifest in `.antigravity-plugin/plugin.json`.
+
+---
+
+### 4. Other Supported Agent Platforms
+* **OpenAI Codex CLI:** Automatically reads `.codex-plugin/plugin.json`.
+* **Cursor / Windsurf:** Auto-reads `.cursor-plugin/plugin.json` and `.mcp.json`.
+* **Cognition Devin:** Auto-reads `.devin-plugin/plugin.json`.
+* **Moonshot Kimi Code:** Auto-reads `.kimi-plugin/plugin.json` with native tool mapping.
+* **OpenCode:** Add `"jules-orchestrator@git+https://github.com/nur-srijan/jules-mcp.git"` to `.opencode/`.
+
+---
+
+## 🧠 What is `jules-orchestrator`?
+
+The `jules-orchestrator` skill teaches your AI coding assistant how to act as a **Lead Architect and Orchestrator** when delegating tasks to Google Jules:
+
+* **Contract-First Task Decomposition:** Prevents "kitchen-sink" prompts by locking down shared data types on `main` before delegating.
+* **Parallel Non-Interfering Sessions:** Identifies decoupled file domains (e.g. Engine Core vs Benchmark Scenarios vs UI Shell) and runs concurrent Jules sessions without merge conflicts.
+* **5-Gate Plan Review & Steering:** Enforces rigorous evaluation of Jules' proposed plans before calling `approve_plan` (guards against fake stubs, inverted coordinates, and missing test steps).
+* **Turn Budget Protection:** Uses non-blocking milestoned polling (`wait_for_session`) instead of rapid loops.
+* **Verification Before Completion:** Inspects git diffs, executes test suites locally, and verifies PRs in topological order before marking tasks complete.
+
+See the full documentation and reference guides in [`skills/jules-orchestrator/`](./skills/jules-orchestrator/).
+
+---
+
+## 🛠️ MCP Server: Available Tools
+
+When connected via MCP, the server exposes 7 core tools for controlling Jules:
 
 | Tool | Description |
 |---|---|
@@ -18,7 +84,7 @@ A production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.i
 
 ---
 
-## 🚀 Setup & Prerequisites
+## 🚀 Server Setup & Prerequisites
 
 ### 1. Install Dependencies & Build
 ```bash
@@ -58,7 +124,7 @@ Deploy the server to any cloud host (Railway, Google Cloud Run, Render, VPS):
 
 ### Option B: Local + HTTPS Tunnel (Free, Zero Cloud Cost)
 
-If a friend wants to run this on their own computer without deploying to the cloud:
+If a friend or collaborator wants to run this on their own computer without deploying to the cloud:
 
 #### Step 1: Set environment variables
 Create a `.env` file or export variables in your terminal:
@@ -105,7 +171,7 @@ Add `/mcp` to your tunnel URL (e.g., `https://random-subdomain.trycloudflare.com
 
 For local desktop editors, you can connect directly via `stdio` (zero server required):
 
-#### Claude Desktop
+#### Claude Desktop / Claude Code
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
@@ -173,3 +239,8 @@ Because this server connects to your Jules API quota and can trigger coding sess
 * **OAuth Token**: `POST /oauth/token` (Accepts `client_id` and `client_secret`)
 * **MCP Streamable HTTP**: `ALL /mcp`
 * **SSE Stream**: `GET /sse`
+
+---
+
+## 📄 License
+MIT © [Nur Srijan](https://github.com/nur-srijan)

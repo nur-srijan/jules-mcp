@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "jules-orchestrator-marketplace",
+  "version": "1.0.0",
+  "description": "Marketplace for Google Jules agent orchestration skills and MCP tooling.",
+  "owner": {
+    "name": "Nur Srijan",
+    "url": "https://github.com/nur-srijan"
+  },
+  "plugins": [
+    {
+      "name": "jules-orchestrator",
+      "description": "Lead Architect & Orchestrator skill for Google Jules: parallel sessions, plan governance, and verification.",
+      "version": "1.0.0",
+      "source": "./",
+      "author": {
+        "name": "Nur Srijan",
+        "url": "https://github.com/nur-srijan"
+      }
+    }
+  ]
+}

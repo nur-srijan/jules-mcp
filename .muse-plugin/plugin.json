@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "jules-orchestrator",
+  "displayName": "Jules Orchestrator",
+  "version": "1.0.0",
+  "description": "Lead Architect & Orchestrator skill for Google Jules: parallel sessions, plan governance, and verification.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "skills": "./skills/"
+}

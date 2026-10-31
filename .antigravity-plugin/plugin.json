@@ -1,0 +1,28 @@
+{
+  "name": "jules-orchestrator",
+  "displayName": "Jules Orchestrator",
+  "version": "1.0.0",
+  "description": "Orchestrate asynchronous coding tasks with Google Jules agent: parallel sessions, plan governance, and verification.",
+  "suggestedPrompts": [
+    "Let's break down this feature and delegate it to Jules",
+    "Run independent tasks with Jules in parallel"
+  ],
+  "category": "Developer Tools",
+  "keywords": [
+    "jules",
+    "orchestrator",
+    "mcp",
+    "skills",
+    "parallel-agents",
+    "tdd",
+    "workflows"
+  ],
+  "author": {
+    "name": "Nur Srijan",
+    "url": "https://github.com/nur-srijan"
+  },
+  "homepage": "https://github.com/nur-srijan/jules-mcp",
+  "repository": "https://github.com/nur-srijan/jules-mcp",
+  "skills": "./skills/",
+  "license": "MIT"
+}

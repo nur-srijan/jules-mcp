@@ -1,0 +1,6 @@
+{
+  "name": "jules-orchestrator",
+  "description": "Lead Architect & Orchestrator skill for Google Jules: parallel sessions, plan governance, and verification.",
+  "version": "1.0.0",
+  "skills": "./skills/"
+}

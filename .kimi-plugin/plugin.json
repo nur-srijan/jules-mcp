@@ -1,0 +1,34 @@
+{
+  "name": "jules-orchestrator",
+  "version": "1.0.0",
+  "description": "Lead Architect & Orchestrator skills framework for Google Jules: planning, parallel session dispatch, plan governance, and verification.",
+  "author": {
+    "name": "Nur Srijan",
+    "url": "https://github.com/nur-srijan"
+  },
+  "homepage": "https://github.com/nur-srijan/jules-mcp",
+  "license": "MIT",
+  "keywords": [
+    "jules",
+    "orchestrator",
+    "mcp",
+    "skills",
+    "planning",
+    "parallel-agents",
+    "tdd",
+    "workflows"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Jules Orchestrator",
+    "shortDescription": "Orchestrate asynchronous coding tasks with Google Jules",
+    "longDescription": "Use Jules Orchestrator to govern asynchronous coding tasks, enforce contract-first task decomposition, run parallel non-interfering sessions, and verify pull requests.",
+    "developerName": "Nur Srijan",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/nur-srijan/jules-mcp"
+  }
+}

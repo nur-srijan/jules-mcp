@@ -1,0 +1,23 @@
+{
+  "name": "jules-orchestrator",
+  "displayName": "Jules Orchestrator",
+  "description": "Lead Architect & Orchestrator skill: parallel Jules sessions, plan governance, and verification.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Nur Srijan",
+    "url": "https://github.com/nur-srijan"
+  },
+  "homepage": "https://github.com/nur-srijan/jules-mcp",
+  "repository": "https://github.com/nur-srijan/jules-mcp",
+  "license": "MIT",
+  "keywords": [
+    "jules",
+    "orchestrator",
+    "mcp",
+    "skills",
+    "parallel-agents",
+    "tdd",
+    "workflows"
+  ],
+  "skills": "./skills/"
+}

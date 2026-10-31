@@ -1,0 +1,16 @@
+{
+  "name": "jules-orchestrator-dev",
+  "description": "Development marketplace for Jules Orchestrator skills and MCP server",
+  "owner": {
+    "name": "Nur Srijan",
+    "url": "https://github.com/nur-srijan"
+  },
+  "plugins": [
+    {
+      "name": "jules-orchestrator",
+      "description": "Lead Architect & Orchestrator skill for Google Jules: parallel sessions, plan governance, and verification.",
+      "version": "1.0.0",
+      "source": "./"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "jules-orchestrator",
+  "description": "Lead Architect & Orchestrator skill for Google Jules agent with parallel sessions, strict plan review gates, and verification.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Nur Srijan",
+    "url": "https://github.com/nur-srijan"
+  },
+  "homepage": "https://github.com/nur-srijan/jules-mcp",
+  "repository": "https://github.com/nur-srijan/jules-mcp",
+  "license": "MIT",
+  "keywords": [
+    "jules",
+    "orchestrator",
+    "mcp",
+    "subagents",
+    "parallel-agents",
+    "agent-skills",
+    "tdd",
+    "code-review"
+  ],
+  "skills": "./skills/"
+}
